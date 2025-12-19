@@ -22,7 +22,29 @@ The system is built on a robust Python stack:
 ### Prerequisites
 *   Python 3.8+
 *   pip
-
+*   
+## Project Structure
+``` text
+AI_Powered_learning_intelligence_tool/
+│
+├── app/                  
+│   ├── app.py
+|   ├── upload_validate.py     
+│   ├── EDA_preprocessing.py
+|   ├── prediction_insights.py
+|
+|── src/
+|    ├── __init___.py
+|    ├── data_loader.py
+|    ├── preprocessor.py
+|    ├── model_trainer.py
+|    ├── predictior.py
+|    ├── insights.py
+|
+├── main.py                     
+├── requirements.txt            
+└── README.md                   
+```
 ### Installation
 
 1.  Clone the repository and navigate to the project directory.
@@ -58,3 +80,7 @@ The system employs an automated ensemble approach, training multiple classifiers
 ### Risk & Difficulty Logic
 *   **Risk Score**: Calculated based on the ratio of completion rate to average time spent. Students with low completion and low engagement time are flagged as High Risk.
 *   **Difficulty Score**: A composite metric weighing completion rate (60%) and normalized time spent (40%) to pinpoint challenging content.
+## Live App
+
+Check out the **live demo**:  
+[Streamlit Cloud Link](#) *(https://aipoweredlearningintelligencetool-by-radheshyam.streamlit.app/)*
