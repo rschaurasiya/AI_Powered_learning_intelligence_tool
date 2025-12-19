@@ -99,6 +99,14 @@ def cleanup_data(current_page, target_page):
         st.session_state.preprocessed_data = None
         st.session_state.cleaned_data = None
         st.session_state.data = None # Force re-upload
+        
+        # Clear raw_data and view mode if they exist
+        if 'raw_data' in st.session_state:
+            del st.session_state.raw_data
+        if 'viz_view_mode' in st.session_state:
+            del st.session_state.viz_view_mode
+        if 'show_prev_insights' in st.session_state:
+            del st.session_state.show_prev_insights
 
 
 def main():

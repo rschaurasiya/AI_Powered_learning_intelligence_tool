@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import streamlit.components.v1 as components
 import sys
 from pathlib import Path
 
@@ -59,7 +60,10 @@ def show(navigate_to, cleanup_data):
         cleanup_data: Function to clean up session state when navigating back.
     """
     st.markdown('<div class="section-header"> Exploratory Data Analysis</div>', unsafe_allow_html=True)
-    
+ 
+    if 'viz_view_mode' not in st.session_state:
+        st.session_state.viz_view_mode = 'raw'
+
     if st.session_state.data is None:
         st.warning(" Please upload a CSV file first in the 'Upload & Validate' page")
         if st.button(" Go to Upload"):
@@ -76,189 +80,233 @@ def show(navigate_to, cleanup_data):
         st.markdown(f'<div class="warning-box"> Warning: Your data contains {null_count} null values. Please clean your data for better visualizations.</div>', 
                   unsafe_allow_html=True)
     
-    # Show cleaning summary if available
-    if st.session_state.cleaning_actions:
-        st.markdown('<div class="success-box"> Data has been cleaned and is ready for analysis!</div>', 
-                  unsafe_allow_html=True)
+    # Store raw data if not present (this assumes we enter with raw data initially)
+    if 'raw_data' not in st.session_state and st.session_state.data is not None and st.session_state.cleaning_actions is None:
+        st.session_state.raw_data = st.session_state.data.copy()
+
+    # Determine data source based on view mode
+    if st.session_state.viz_view_mode == 'raw':
+        # Fallback if raw_data missing (shouldn't happen if flow is correct)
+        df = st.session_state.raw_data.copy() if 'raw_data' in st.session_state else st.session_state.data.copy()
+    elif st.session_state.viz_view_mode == 'clean':
+        df = st.session_state.data.copy()
+    else:
+        df = None # Hidden mode
+    
+    # Visualizations Container
+    if st.session_state.viz_view_mode != 'hidden' and df is not None:
+        # Create a clean version for visualizations (drop rows with nulls in key viz columns)
+        viz_df = df.dropna(subset=['Time_Spent_Hours', 'Scores', 'Completed', 'Chapter_Order'])
         
-        with st.expander("View Cleaning Summary"):
-            for col, action in st.session_state.cleaning_actions.items():
-                st.write(f"- **{col}**: {action}")
-    
-    # Create a clean version for visualizations (drop rows with nulls in key viz columns)
-    viz_df = df.dropna(subset=['Time_Spent_Hours', 'Scores', 'Completed', 'Chapter_Order'])
-    
-    if len(viz_df) < len(df) and has_nulls:
-        st.info(f" Visualizations show {len(viz_df)} of {len(df)} records (rows with nulls excluded)")
-    
-    # Statistical Summary
-    st.markdown("###  Statistical Summary")
-    st.dataframe(df.describe(), use_container_width=True)
-    
-    # Visualizations
-    st.markdown("###  Data Visualizations")
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["Distributions", "Correlations", "Outliers", "Patterns"])
-    
-    with tab1:
-        st.markdown("**Distribution of Numerical Features**")
+        if len(viz_df) < len(df) and has_nulls:
+            st.info(f" Visualizations show {len(viz_df)} of {len(df)} records (rows with nulls excluded)")
         
-        col1, col2 = st.columns(2)
+        # Statistical Summary
+        st.markdown("###  Statistical Summary")
+        st.dataframe(df.describe(), use_container_width=True)
         
-        with col1:
-            # Time Spent Distribution
-            fig = px.histogram(viz_df, x='Time_Spent_Hours', 
-                             title='Time Spent Distribution',
-                             color='Completed', 
-                             barmode='overlay',
-                             labels={'Completed': 'Completed'})
-            st.plotly_chart(fig, use_container_width=True)
+        # Visualizations
+        st.markdown("###  Data Visualizations")
+        
+        tab1, tab2, tab3, tab4 = st.tabs(["Distributions", "Correlations", "Outliers", "Patterns"])
+        
+        with tab1:
+            st.markdown("**Distribution of Numerical Features**")
             
-            # Scores Distribution
-            fig = px.histogram(viz_df, x='Scores', 
-                             title='Scores Distribution',
-                             color='Completed',
-                             barmode='overlay')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Chapter Order Distribution
-            fig = px.histogram(viz_df, x='Chapter_Order', 
-                             title='Chapter Order Distribution',
-                             color='Completed',
-                             barmode='group')
-            st.plotly_chart(fig, use_container_width=True)
+            col1, col2 = st.columns(2)
             
-            # Completion Rate by Chapter
-            completion_by_chapter = viz_df.groupby('Chapter_Order')['Completed'].mean().reset_index()
-            fig = px.bar(completion_by_chapter, x='Chapter_Order', y='Completed',
-                       title='Completion Rate by Chapter',
-                       labels={'Completed': 'Completion Rate'})
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with tab2:
-        st.markdown("**Correlation Analysis**")
-        
-        # Correlation heatmap
-        numeric_df = viz_df.select_dtypes(include=[np.number])
-        corr = numeric_df.corr()
-        
-        fig = px.imshow(corr, 
-                      title='Correlation Heatmap',
-                      color_continuous_scale='RdBu_r',
-                      aspect='auto')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Scatter plots
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.scatter(viz_df, x='Time_Spent_Hours', y='Scores', 
-                           color='Completed', title='Time vs Scores',
-                           trendline='ols')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            fig = px.scatter(viz_df, x='Chapter_Order', y='Scores',
-                           color='Completed', title='Chapter vs Scores',
-                           size='Time_Spent_Hours')
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with tab3:
-        st.markdown("**Outlier Detection & Handling**")
-        
-        # Detect outliers
-        outliers_info = {}
-        for col in ['Time_Spent_Hours', 'Scores']:
-            Q1 = df[col].quantile(0.25)
-            Q3 = df[col].quantile(0.75)
-            IQR = Q3 - Q1
-            lower_bound = Q1 - 1.5 * IQR
-            upper_bound = Q3 + 1.5 * IQR
+            with col1:
+                # Time Spent Distribution
+                fig = px.histogram(viz_df, x='Time_Spent_Hours', 
+                                 title='Time Spent Distribution',
+                                 color='Completed', 
+                                 barmode='overlay',
+                                 labels={'Completed': 'Completed'})
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+                
+                # Scores Distribution
+                fig = px.histogram(viz_df, x='Scores', 
+                                 title='Scores Distribution',
+                                 color='Completed',
+                                 barmode='overlay')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
             
-            outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
-            outliers_info[col] = len(outliers)
+            with col2:
+                # Chapter Order Distribution
+                fig = px.histogram(viz_df, x='Chapter_Order', 
+                                 title='Chapter Order Distribution',
+                                 color='Completed',
+                                 barmode='group')
+                fig.update_layout(xaxis=dict(dtick=1, fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+                
+                # Completion Rate by Chapter
+                completion_by_chapter = viz_df.groupby('Chapter_Order')['Completed'].mean().reset_index()
+                fig = px.bar(completion_by_chapter, x='Chapter_Order', y='Completed',
+                           title='Completion Rate by Chapter',
+                           labels={'Completed': 'Completion Rate'})
+                fig.update_layout(xaxis=dict(dtick=1, fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
         
-        # Display outlier info
-        cols = st.columns(len(outliers_info))
-        for i, (col, count) in enumerate(outliers_info.items()):
-            with cols[i]:
-                st.metric(f"Outliers in {col}", count, 
-                        delta="High Risk" if count > 0 else "Clean",
-                        delta_color="inverse")
+        with tab2:
+            st.markdown("**Correlation Analysis**")
+            
+            # Correlation heatmap
+            numeric_df = viz_df.select_dtypes(include=[np.number])
+            corr = numeric_df.corr()
+            
+            fig = px.imshow(corr, 
+                          title='Correlation Heatmap',
+                          color_continuous_scale='RdBu_r',
+                          aspect='auto')
+            fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+            
+            # Scatter plots
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.scatter(viz_df, x='Time_Spent_Hours', y='Scores', 
+                               color='Completed', title='Time vs Scores',
+                               trendline='ols')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+            
+            with col2:
+                fig = px.scatter(viz_df, x='Chapter_Order', y='Scores',
+                               color='Completed', title='Chapter vs Scores',
+                               size='Time_Spent_Hours')
+                fig.update_layout(xaxis=dict(dtick=1, fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
         
-        # Box plots
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.box(df, y='Time_Spent_Hours', title='Box Plot: Time Spent')
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            fig = px.box(df, y='Scores', title='Box Plot: Scores')
-            st.plotly_chart(fig, use_container_width=True)
+        with tab3:
+            st.markdown("**Outlier Detection & Handling**")
+            
+            # Detect outliers
+            outliers_info = {}
+            for col in ['Time_Spent_Hours', 'Scores']:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                
+                outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+                outliers_info[col] = len(outliers)
+            
+            # Display outlier info
+            cols = st.columns(len(outliers_info))
+            for i, (col, count) in enumerate(outliers_info.items()):
+                with cols[i]:
+                    st.metric(f"Outliers in {col}", count, 
+                            delta="High Risk" if count > 0 else "Clean",
+                            delta_color="inverse")
+            
+            # Box plots
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.box(df, y='Time_Spent_Hours', title='Box Plot: Time Spent')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+            with col2:
+                fig = px.box(df, y='Scores', title='Box Plot: Scores')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+            
+            # Outlier handling options
+            st.markdown("**Handle Outliers**")
+            outlier_method = st.radio("Select outlier handling method:", 
+                                     ["Keep All Data", "Cap Outliers", "Remove Outliers"])
+            
+            if st.button("Apply Outlier Handling"):
+                if outlier_method == "Keep All Data":
+                    st.session_state.cleaned_data = df
+                    st.info(" Keeping all data without outlier handling")
+                elif outlier_method == "Cap Outliers":
+                    cleaned_df, info = handle_outliers(df, method='cap')
+                    st.session_state.cleaned_data = cleaned_df
+                    st.success(f" Outliers capped! Processed {sum([v['count'] for v in info.values()])} outliers")
+                else:
+                    cleaned_df, info = handle_outliers(df, method='remove')
+                    st.session_state.cleaned_data = cleaned_df
+                    st.success(f" Outliers removed! Dataset reduced from {len(df)} to {len(cleaned_df)} records")
         
-        # Outlier handling options
-        st.markdown("**Handle Outliers**")
-        outlier_method = st.radio("Select outlier handling method:", 
-                                 ["Keep All Data", "Cap Outliers", "Remove Outliers"])
-        
-        if st.button("Apply Outlier Handling"):
-            if outlier_method == "Keep All Data":
-                st.session_state.cleaned_data = df
-                st.info(" Keeping all data without outlier handling")
-            elif outlier_method == "Cap Outliers":
-                cleaned_df, info = handle_outliers(df, method='cap')
-                st.session_state.cleaned_data = cleaned_df
-                st.success(f" Outliers capped! Processed {sum([v['count'] for v in info.values()])} outliers")
-            else:
-                cleaned_df, info = handle_outliers(df, method='remove')
-                st.session_state.cleaned_data = cleaned_df
-                st.success(f" Outliers removed! Dataset reduced from {len(df)} to {len(cleaned_df)} records")
-    
-    with tab4:
-        st.markdown("**Learning Patterns Analysis**")
-        
-        # Average time by completion status
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            avg_time = viz_df.groupby('Completed')['Time_Spent_Hours'].mean().reset_index()
-            avg_time['Completed'] = avg_time['Completed'].map({0: 'Not Completed', 1: 'Completed'})
-            fig = px.bar(avg_time, x='Completed', y='Time_Spent_Hours',
-                       title='Average Time by Completion Status',
-                       color='Completed')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            avg_scores = viz_df.groupby('Completed')['Scores'].mean().reset_index()
-            avg_scores['Completed'] = avg_scores['Completed'].map({0: 'Not Completed', 1: 'Completed'})
-            fig = px.bar(avg_scores, x='Completed', y='Scores',
-                       title='Average Scores by Completion Status',
-                       color='Completed')
-            st.plotly_chart(fig, use_container_width=True)
-    
+        with tab4:
+            st.markdown("**Learning Patterns Analysis**")
+            
+            # Average time by completion status
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                avg_time = viz_df.groupby('Completed')['Time_Spent_Hours'].mean().reset_index()
+                avg_time['Completed'] = avg_time['Completed'].map({0: 'Not Completed', 1: 'Completed'})
+                fig = px.bar(avg_time, x='Completed', y='Time_Spent_Hours',
+                           title='Average Time by Completion Status',
+                           color='Completed')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
+            
+            with col2:
+                avg_scores = viz_df.groupby('Completed')['Scores'].mean().reset_index()
+                avg_scores['Completed'] = avg_scores['Completed'].map({0: 'Not Completed', 1: 'Completed'})
+                fig = px.bar(avg_scores, x='Completed', y='Scores',
+                           title='Average Scores by Completion Status',
+                           color='Completed')
+                fig.update_layout(xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'scrollZoom': False, 'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d']})
     
     # Data Cleaning Section
     st.markdown("---")
     st.markdown("###  Data Cleaning")
-    st.write("If your data has missing values or outliers, click below to clean it before preprocessing.")
     
-    if st.button("Clean & Fix Data", type="primary"):
-        with st.spinner("Cleaning data..."):
-            preprocessor = DataPreprocessor()
-            
-            # 1. Handle Missing Values
-            cleaned_df, actions = preprocessor.handle_missing_values(df)
-            
-            # 2. Handle Outliers
-            cleaned_df, outlier_actions = preprocessor.handle_outliers(cleaned_df)
-            
-            # Store results
-            st.session_state.data = cleaned_df
-            st.session_state.cleaned_data = cleaned_df
-            st.session_state.cleaning_actions = {**actions, **outlier_actions}
-            st.session_state.preprocessed_data = None # Reset preprocessing to force re-run
-            
-            st.success(" Data cleaned successfully!")
-            st.rerun()
+    if not st.session_state.cleaning_actions:
+        st.write("If your data has missing values or outliers, click below to clean it before preprocessing.")
+        
+        if st.button("Clean & Fix Data", type="primary"):
+            with st.spinner("Cleaning data..."):
+                preprocessor = DataPreprocessor()
+                
+                # Use raw data for cleaning
+                data_to_clean = st.session_state.raw_data.copy() if 'raw_data' in st.session_state else st.session_state.data.copy()
+
+                # 1. Handle Missing Values
+                cleaned_df, actions = preprocessor.handle_missing_values(data_to_clean)
+                
+                # 2. Handle Outliers
+                cleaned_df, outlier_actions = preprocessor.handle_outliers(cleaned_df)
+                
+                # Store results
+                st.session_state.data = cleaned_df
+                st.session_state.cleaned_data = cleaned_df
+                st.session_state.cleaning_actions = {**actions, **outlier_actions}
+                st.session_state.preprocessed_data = None # Reset preprocessing to force re-run
+                st.session_state.viz_view_mode = 'hidden' # Hide visuals
+                st.session_state.show_prev_insights = False 
+                
+                st.success(" Data cleaned successfully!")
+                st.rerun()
+    else:
+        # Show cleaning summary if available
+        st.markdown('<div class="success-box"> Data has been cleaned successfully!</div>', 
+                  unsafe_allow_html=True)
+        
+        with st.expander("View Cleaning Summary", expanded=True):
+            for col, action in st.session_state.cleaning_actions.items():
+                st.write(f"- **{col}**: {action}")
+        
+        # Toggle Buttons
+        st.markdown("### Select Insights View")
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            if st.button("See Previous Insights", use_container_width=True):
+                st.session_state.viz_view_mode = 'raw'
+                st.rerun()
+        with tc2:
+            if st.button("See Clean Insights", use_container_width=True, type="primary" if st.session_state.viz_view_mode == 'clean' else "secondary"):
+                st.session_state.viz_view_mode = 'clean'
+                st.rerun()
+
 
     # Preprocessing Section
     st.markdown("---")
@@ -320,12 +368,75 @@ def show(navigate_to, cleanup_data):
                  use_container_width=True)
         
     with col3:
-         # Next Button
-        if st.session_state.preprocessed_data is not None:
+         # Next Button Logic
+        if 'confirm_prediction_nav' not in st.session_state:
+            st.session_state.confirm_prediction_nav = False
+
+        if not st.session_state.confirm_prediction_nav:
+            def on_go_to_predictions():
+                # Check if data is clean
+                if not st.session_state.cleaning_actions:
+                    st.session_state.confirm_prediction_nav = True
+                else:
+                    # Proceed normally
+                    navigate_to("Predictions & Insights")
+            
             st.button(" Go to Predictions", 
                      type="primary", 
                      use_container_width=True,
-                     on_click=navigate_to,
-                     args=("Predictions & Insights",))
+                     on_click=on_go_to_predictions)
+        
         else:
-            st.info("Wait for preprocessing...")
+             # Placeholder to keep layout stable while warning is shown below/above
+             pass
+
+    # Warning and Options for Uncleaned Data
+    if st.session_state.confirm_prediction_nav:
+        st.markdown("---")
+        st.warning("⚠️ **Warning: Your data has not been cleaned yet!** Uncleaned data may lead to poor predictions.")
+        
+        wc1, wc2 = st.columns(2)
+        with wc1:
+            if st.button("Clean & Fix Data", key="nav_clean_fix", type="primary", use_container_width=True):
+                 with st.spinner("Cleaning and Preprocessing..."):
+                    preprocessor = DataPreprocessor()
+                    # 1. Clean
+                    cleaned_df, actions = preprocessor.handle_missing_values(df)
+                    cleaned_df, outlier_actions = preprocessor.handle_outliers(cleaned_df)
+                    
+                    # Store results
+                    st.session_state.data = cleaned_df
+                    st.session_state.cleaned_data = cleaned_df
+                    st.session_state.cleaning_actions = {**actions, **outlier_actions}
+                    st.session_state.show_prev_insights = False
+                    
+                    # 2. Preprocess
+                    X, y = preprocessor.prepare_features(cleaned_df, target_column='Completed', fit=True)
+                    st.session_state.preprocessed_data = {
+                        'X': X,
+                        'y': y,
+                        'preprocessor': preprocessor,
+                        'original_data': cleaned_df
+                    }
+                    
+                    st.session_state.confirm_prediction_nav = False
+                    navigate_to("Predictions & Insights")
+                    st.rerun()
+
+        with wc2:
+            if st.button("Continue Anyway", key="nav_continue", use_container_width=True):
+                with st.spinner("Preprocessing uncleaned data..."):
+                    preprocessor = DataPreprocessor()
+                    # Preprocess RAW data
+                    X, y = preprocessor.prepare_features(df, target_column='Completed', fit=True)
+                    st.session_state.preprocessed_data = {
+                        'X': X,
+                        'y': y,
+                        'preprocessor': preprocessor,
+                        'original_data': df
+                    }
+                    
+                    st.session_state.confirm_prediction_nav = False
+                    navigate_to("Predictions & Insights")
+                    st.rerun()
+
